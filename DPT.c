@@ -1,21 +1,9 @@
 
-/*
- * Modular refactor of DPT_QPT_SWEEP_FLYBACK_TEST.c
- * F28P65x / C2000 DriverLib.
- * Timing and mode behavior retained from source.
- */
 #include "driverlib.h"
 #include "device.h"
 #include "Source/DPT_tests.h"
 #include "Peripherals/TI_EPWM.h"
 
-/*
- * Edit these variables in CCS Expressions. The other modules use extern
- * declarations in DPT_tests.h and TI_EPWM.h; do not define them twice.
- *
- * Modes: 0=STOP, 1=DPT, 2=DPT_SWEEP, 3=QPT, 4=FLYBACK_TEST,
- *        5=SWITCHING_UG_TEST (50% PWM after inductor charge).
- */
 volatile AutomatedTest automated_test = STOP;
 volatile uint32_t automated_test_cnt = 0UL;
 
@@ -25,23 +13,22 @@ volatile uint16_t dpt_freewheel_us = 2U;
 volatile uint16_t dpt_second_pulse_us = 2U;
 volatile uint16_t passive_boost = 0U;
 
+// Flyback supply, startup at 15 V.
 volatile uint32_t flyback_pwm_frequency_hz = 12000UL;
 volatile uint16_t flyback_pwm_enable = 1U;
 volatile uint16_t flyback_vdd_control_enable = 1U;
-volatile float flyback_target_vdd = 15.0f;    // Startup target: 15 V
+volatile float flyback_target_vdd = 0.0f;
 volatile float flyback_pwm_duty = 0.09483871f;
-volatile uint32_t flyback_test_step_ms = 100UL;
+volatile uint32_t flyback_test_step_ms = 2000UL;
 
-/*
- * SWITCHING_UG_TEST (mode 5), set before each test in CCS Expressions:
- *  - Switching at 50% duty after standard coil charging
- *  - Gate supply steps: 20 V, 18 V, 15 V, 12 V, then 0 V and OFF
- *  - WARNING: 50% duty DOES NOT regulate inductor current.
- *    An independent current limiter / hardware protection is necessary.
- *  - Deliberate opt-in, resets to 0 after the run.
- */
+// SWITCHING_UG_TEST = 5.
+// Each Ug stage lasts 500 ms.
+// A temporary flyback PWM duty of 0.16 is applied
+// for 20, 40, 70, or 100 ms depending on Ug.
+// Switching duty is 52%, 54%, 56%, and 58%.
 volatile uint32_t switching_ug_frequency_hz = 20000UL;
-volatile uint32_t switching_ug_step_ms = 2000UL;
+volatile uint32_t switching_ug_step_ms = 500UL;
+volatile float switching_ug_pid_duty = 0.16f;
 volatile uint16_t switching_ug_inf_high = 1U;
 volatile uint16_t switching_ug_openloop_arm = 0U;
 
@@ -50,7 +37,6 @@ void main(void)
     Device_init();
     Device_initGPIO();
 
-    // Preserve startup 15 V command and original flyback calibration.
     TI_EPWM_SetFlybackVdd(flyback_target_vdd);
     TI_EPWM_Init();
 
@@ -62,13 +48,13 @@ void main(void)
     EINT;
     ERTM;
 
-    // All time-critical test sequencing runs from the ePWM5 ISR.
     for (;;)
     {
         if (flyback_vdd_control_enable != 0U)
         {
             TI_EPWM_SetFlybackVdd(flyback_target_vdd);
         }
+
         TI_EPWM_UpdateFlybackPWM();
     }
 }
